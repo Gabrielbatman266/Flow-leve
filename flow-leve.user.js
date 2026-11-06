@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Flow Leve
 // @namespace    https://github.com/Gabrielbatman266
-// @version      1.1
+// @version      1.2
 // @description  Deixa o Google Flow mais leve no celular: sem animações, prévias de vídeo pausadas, memória liberada e tela sempre ligada enquanto gera.
 // @match        https://labs.google/fx/*
 // @run-at       document-start
@@ -19,10 +19,71 @@
 
   const KEY = 'flowLeveCfg';
   const cfg = Object.assign(
-    { ligado: true, liberarMemoria: true, telaLigada: false },
+    { ligado: true, liberarMemoria: true, telaLigada: false, protegerVoltar: true },
     (() => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch (e) { return {}; } })()
   );
   const salvar = () => { try { localStorage.setItem(KEY, JSON.stringify(cfg)); } catch (e) {} };
+
+  // ---------- 0. Botão voltar não tira mais você do projeto ----------
+  // Fica numa "trava" no histórico: voltar fecha menus/janelas primeiro;
+  // pra sair do projeto de verdade, toque voltar 2x seguidas.
+  const emProjeto = () => /\/tools\/flow\/.+/.test(location.pathname);
+  let travado = false;
+  let urlTrava = '';
+  let ultimoVoltar = 0;
+
+  function armarTrava() {
+    if (!cfg.protegerVoltar || travado || !emProjeto()) return;
+    // copia o estado atual (o site precisa dele) e duplica a entrada
+    history.pushState(history.state, '', location.href);
+    travado = true;
+    urlTrava = location.href;
+  }
+
+  // Quando o próprio site navega, a trava antiga fica pra trás: rearma na nova página
+  const pushOriginal = history.pushState.bind(history);
+  history.pushState = function (...args) {
+    const r = pushOriginal(...args);
+    if (!armando) { travado = false; setTimeout(armarSeguro, 300); }
+    return r;
+  };
+  let armando = false;
+  function armarSeguro() { armando = true; try { armarTrava(); } finally { armando = false; } }
+
+  function fecharAlgo() {
+    // 1º: painéis do próprio script
+    for (const id of ['flow-leve-painel', 'flow-leve-menu']) {
+      const el = document.getElementById(id);
+      if (el && el.style.display === 'block') { el.style.display = 'none'; return true; }
+    }
+    // 2º: janelas/menus abertos do Flow → manda "Esc"
+    const aberto = [...document.querySelectorAll('[role="dialog"], [aria-modal="true"], [role="menu"], [role="listbox"]')]
+      .some((el) => el.offsetParent !== null || getComputedStyle(el).position === 'fixed');
+    if (aberto) {
+      const alvo = document.activeElement || document.body;
+      ['keydown', 'keyup'].forEach((tipo) =>
+        alvo.dispatchEvent(new KeyboardEvent(tipo, { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true })));
+      return true;
+    }
+    return false;
+  }
+
+  window.addEventListener('popstate', (e) => {
+    if (!travado || !cfg.protegerVoltar) return;
+    travado = false;
+    if (location.href !== urlTrava) return; // não foi a nossa trava: deixa o site agir
+    e.stopImmediatePropagation(); // o site nem fica sabendo desse "voltar"
+    if (fecharAlgo()) { armarSeguro(); return; }
+    const agora = Date.now();
+    if (agora - ultimoVoltar < 2000) { history.back(); return; } // 2º toque: sai de verdade
+    ultimoVoltar = agora;
+    avisar('Toque voltar de novo pra sair do projeto');
+    armarSeguro();
+  }, true);
+
+  // Navegadores ignoram entradas de histórico criadas sem toque do usuário,
+  // então arma a trava (de novo) no primeiro toque na tela também
+  window.addEventListener('pointerdown', (e) => { if (!ehNossaUI(e.target)) armarSeguro(); }, true);
 
   // ---------- 1. CSS: corta animações, desfoques e sombras ----------
   const css = `
@@ -214,6 +275,7 @@
       <label><input type="checkbox" data-k="ligado"> Modo leve</label>
       <label><input type="checkbox" data-k="liberarMemoria"> Liberar memória dos vídeos fora da tela</label>
       <label><input type="checkbox" data-k="telaLigada"> Manter tela ligada</label>
+      <label><input type="checkbox" data-k="protegerVoltar"> Voltar não sai do projeto</label>
       <small>Desligar o modo leve recarrega a página.</small>
     `;
 
@@ -380,6 +442,7 @@
   function iniciar() {
     montarBotao();
     montarPrompts();
+    armarSeguro();
     if (cfg.ligado) varrer(document.body);
     obs.observe(document.body, { childList: true, subtree: true });
     pedirTelaLigada();
