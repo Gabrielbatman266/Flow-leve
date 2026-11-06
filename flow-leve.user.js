@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Flow Leve
 // @namespace    https://github.com/Gabrielbatman266
-// @version      1.0
+// @version      1.1
 // @description  Deixa o Google Flow mais leve no celular: sem animações, prévias de vídeo pausadas, memória liberada e tela sempre ligada enquanto gera.
 // @match        https://labs.google/fx/*
 // @run-at       document-start
@@ -39,6 +39,9 @@
       text-shadow: none !important;
     }
     img { content-visibility: auto; }
+  `;
+  // Estilo dos botões/painéis do script (sempre ativo, mesmo com modo leve desligado)
+  const cssUI = `
     #flow-leve-btn {
       position: fixed; right: 10px; bottom: 90px; z-index: 2147483647;
       width: 44px; height: 44px; border-radius: 50%;
@@ -53,7 +56,40 @@
     }
     #flow-leve-menu label { display: flex; gap: 8px; align-items: center; padding: 6px 0; }
     #flow-leve-menu small { color: #aaa; }
+    #flow-leve-pbtn {
+      position: fixed; right: 10px; bottom: 140px; z-index: 2147483647;
+      width: 44px; height: 44px; border-radius: 50%; border: none;
+      font-size: 24px; line-height: 44px; text-align: center;
+      background: #188038; color: #fff; opacity: .85;
+    }
+    #flow-leve-menu { bottom: 190px; }
+    #flow-leve-painel {
+      position: fixed; left: 8px; right: 8px; bottom: 190px; z-index: 2147483647;
+      max-height: 55vh; overflow-y: auto; display: none;
+      background: #202124; color: #fff; border-radius: 12px; padding: 8px 10px;
+      font: 15px/1.35 sans-serif;
+    }
+    #flow-leve-painel .fl-topo { display: flex; justify-content: space-between; align-items: center; padding: 2px 0 6px; }
+    #flow-leve-painel small { color: #aaa; }
+    #flow-leve-painel .fl-item { display: flex; gap: 6px; align-items: flex-start; border-top: 1px solid #3c4043; padding: 8px 0; }
+    #flow-leve-painel .fl-txt {
+      flex: 1; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+    }
+    #flow-leve-painel .fl-acoes { display: flex; gap: 2px; }
+    #flow-leve-painel .fl-mini, #flow-leve-painel .fl-topo .fl-mini {
+      background: #3c4043; color: #fff; border: none; border-radius: 8px;
+      min-width: 34px; height: 34px; font-size: 16px;
+    }
+    #flow-leve-aviso {
+      position: fixed; left: 50%; bottom: 30px; transform: translateX(-50%); z-index: 2147483647;
+      background: #323232; color: #fff; padding: 8px 14px; border-radius: 20px;
+      font: 14px sans-serif; display: none;
+    }
   `;
+  const estiloUI = document.createElement('style');
+  estiloUI.id = 'flow-leve-ui';
+  estiloUI.textContent = cssUI;
+  (document.head || document.documentElement).appendChild(estiloUI);
   let estilo = null;
   function aplicarCSS() {
     if (cfg.ligado && !estilo) {
@@ -205,8 +241,145 @@
     document.body.appendChild(btn);
   }
 
+  // ---------- 5. Prompts: histórico com reutilização em 1 toque ----------
+  const KEY_P = 'flowLevePrompts';
+  const MAX_P = 40;
+  let prompts = (() => { try { return JSON.parse(localStorage.getItem(KEY_P)) || []; } catch (e) { return []; } })();
+  const salvarPrompts = () => { try { localStorage.setItem(KEY_P, JSON.stringify(prompts)); } catch (e) {} };
+
+  const ehNossaUI = (el) => !!(el && el.closest && el.closest('#flow-leve-btn, #flow-leve-menu, #flow-leve-pbtn, #flow-leve-painel'));
+
+  // Acha a caixa de prompt: a maior textarea/campo editável visível da página
+  function caixaPrompt() {
+    const cands = [...document.querySelectorAll('textarea, [contenteditable="true"], [role="textbox"]')]
+      .filter((el) => !ehNossaUI(el) && el.offsetParent !== null);
+    if (!cands.length) return null;
+    const foco = document.activeElement;
+    if (foco && cands.includes(foco)) return foco;
+    return cands.sort((a, b) => (b.offsetWidth * b.offsetHeight) - (a.offsetWidth * a.offsetHeight))[0];
+  }
+  const textoDe = (el) => (el ? (el.value !== undefined && el.tagName === 'TEXTAREA' ? el.value : el.innerText) : '').trim();
+
+  function guardarPrompt(t) {
+    if (!t || t.length < 3) return;
+    prompts = prompts.filter((p) => p.t !== t);
+    const fixo = false;
+    prompts.unshift({ t, fixo });
+    // mantém os fixados mesmo passando do limite
+    const fixos = prompts.filter((p) => p.fixo);
+    const soltos = prompts.filter((p) => !p.fixo).slice(0, MAX_P);
+    prompts = [...fixos, ...soltos];
+    salvarPrompts();
+  }
+
+  // Coloca o texto na caixa de um jeito que o site (React) perceba
+  function colocarPrompt(t) {
+    const el = caixaPrompt();
+    if (!el) { navigator.clipboard && navigator.clipboard.writeText(t); avisar('Caixa não achada — prompt copiado'); return; }
+    el.focus();
+    if (el.tagName === 'TEXTAREA') {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+      setter.call(el, t);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    } else {
+      document.execCommand('selectAll', false, null);
+      document.execCommand('insertText', false, t);
+    }
+    avisar('Prompt colocado ✓');
+  }
+
+  function avisar(msg) {
+    let a = document.getElementById('flow-leve-aviso');
+    if (!a) { a = document.createElement('div'); a.id = 'flow-leve-aviso'; document.body.appendChild(a); }
+    a.textContent = msg; a.style.display = 'block';
+    clearTimeout(avisar.t); avisar.t = setTimeout(() => { a.style.display = 'none'; }, 1600);
+  }
+
+  // Grava o prompt quando você envia: Enter na caixa ou toque num botão com texto na caixa
+  let ultimoTexto = '';
+  document.addEventListener('input', (e) => {
+    if (ehNossaUI(e.target)) return;
+    const t = textoDe(caixaPrompt());
+    if (t) ultimoTexto = t;
+  }, true);
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey && !ehNossaUI(e.target)) guardarPrompt(textoDe(caixaPrompt()) || ultimoTexto);
+  }, true);
+  document.addEventListener('click', (e) => {
+    if (ehNossaUI(e.target)) return;
+    const b = e.target.closest && e.target.closest('button, [role="button"]');
+    if (!b) return;
+    const t = textoDe(caixaPrompt());
+    if (t) guardarPrompt(t);
+  }, true);
+
+  function montarPrompts() {
+    if (document.getElementById('flow-leve-pbtn')) return;
+    const btn = document.createElement('button');
+    btn.id = 'flow-leve-pbtn';
+    btn.textContent = '↺';
+    btn.title = 'Reutilizar prompt';
+
+    const painel = document.createElement('div');
+    painel.id = 'flow-leve-painel';
+
+    function desenhar() {
+      painel.innerHTML = '';
+      const topo = document.createElement('div');
+      topo.className = 'fl-topo';
+      topo.innerHTML = '<b>Prompts</b>';
+      const fechar = document.createElement('button');
+      fechar.textContent = '✕'; fechar.className = 'fl-mini';
+      fechar.onclick = () => { painel.style.display = 'none'; };
+      topo.appendChild(fechar);
+      painel.appendChild(topo);
+
+      if (!prompts.length) {
+        const v = document.createElement('small');
+        v.textContent = 'Nenhum prompt ainda. Gere um vídeo e ele aparece aqui.';
+        painel.appendChild(v);
+        return;
+      }
+      const ordenados = [...prompts.filter((p) => p.fixo), ...prompts.filter((p) => !p.fixo)];
+      ordenados.forEach((p) => {
+        const item = document.createElement('div');
+        item.className = 'fl-item';
+        const txt = document.createElement('div');
+        txt.className = 'fl-txt';
+        txt.textContent = (p.fixo ? '★ ' : '') + p.t;
+        txt.onclick = () => { colocarPrompt(p.t); painel.style.display = 'none'; };
+        const acoes = document.createElement('div');
+        acoes.className = 'fl-acoes';
+        const bFixo = document.createElement('button'); bFixo.className = 'fl-mini';
+        bFixo.textContent = p.fixo ? '★' : '☆';
+        bFixo.onclick = () => { p.fixo = !p.fixo; salvarPrompts(); desenhar(); };
+        const bCopiar = document.createElement('button'); bCopiar.className = 'fl-mini';
+        bCopiar.textContent = '📋';
+        bCopiar.onclick = () => { navigator.clipboard && navigator.clipboard.writeText(p.t); avisar('Copiado'); };
+        const bApagar = document.createElement('button'); bApagar.className = 'fl-mini';
+        bApagar.textContent = '🗑';
+        bApagar.onclick = () => { prompts = prompts.filter((x) => x !== p); salvarPrompts(); desenhar(); };
+        acoes.append(bFixo, bCopiar, bApagar);
+        item.append(txt, acoes);
+        painel.appendChild(item);
+      });
+    }
+
+    btn.addEventListener('click', () => {
+      const abrir = painel.style.display !== 'block';
+      if (abrir) desenhar();
+      painel.style.display = abrir ? 'block' : 'none';
+      const m = document.getElementById('flow-leve-menu'); if (m) m.style.display = 'none';
+    });
+
+    document.body.appendChild(painel);
+    document.body.appendChild(btn);
+  }
+
   function iniciar() {
     montarBotao();
+    montarPrompts();
     if (cfg.ligado) varrer(document.body);
     obs.observe(document.body, { childList: true, subtree: true });
     pedirTelaLigada();

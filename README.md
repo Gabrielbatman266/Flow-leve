@@ -18,6 +18,7 @@ As atualizações chegam sozinhas.
 - **Modo leve:** desliga animações, desfoques e sombras.
 - **Prévias pausadas:** os vídeos da galeria só tocam quando você toca neles.
 - **Liberar memória:** tira da memória os vídeos que saem da tela.
+- **↺ Reutilizar prompt:** botão verde com seus últimos prompts. Toque num prompt pra colocá-lo de volta na caixa; ☆ fixa no topo, 📋 copia, 🗑 apaga.
 - **Manter tela ligada:** evita que a aba congele no meio da geração (ative no menu ⚡).
 
 Se alguma coisa quebrar, desligue o **Modo leve** no menu ⚡.
